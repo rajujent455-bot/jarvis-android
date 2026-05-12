@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -26,7 +29,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
-          key: buildozer-${{ runner.os }}-v1
+          key: buildozer-${{ runner.os }}-v2
 
       - name: Build APK
         working-directory: jarvis
