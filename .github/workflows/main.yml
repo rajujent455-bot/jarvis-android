@@ -5,9 +5,6 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -21,19 +18,35 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev build-essential ccache python3-pip python3-dev
-          pip install --upgrade pip setuptools
-          pip install buildozer cython==0.29.36
+          sudo apt-get install -y \
+            git zip unzip \
+            openjdk-17-jdk \
+            autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev \
+            libncursesw5-dev libtinfo5 \
+            cmake libffi-dev libssl-dev \
+            build-essential ccache \
+            python3-pip python3-dev \
+            libltdl-dev
+          pip install --upgrade pip setuptools wheel
+          pip install buildozer==1.5.0
+          pip install cython==0.29.36
 
-      - name: Cache
+      - name: Cache buildozer
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
-          key: buildozer-${{ runner.os }}-v2
+          key: buildozer-${{ runner.os }}-v3
 
       - name: Build APK
         working-directory: jarvis
-        run: buildozer android debug
+        run: |
+          buildozer android debug 2>&1 | tee build.log
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "===== ERROR LINES ====="
+            grep -i "error\|exception\|traceback" build.log | tail -50
+            exit 1
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -41,3 +54,10 @@ jobs:
           name: JARVIS-APK
           path: jarvis/bin/*.apk
           retention-days: 30
+
+      - name: Upload log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: jarvis/build.log
