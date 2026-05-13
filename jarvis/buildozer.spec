@@ -9,9 +9,9 @@ requirements = python3,kivy==2.1.0
 
 orientation = portrait
 android.permissions = INTERNET,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE
-android.api = 31
-android.minapi = 21
-android.ndk = 23b
+android.api = 33
+android.minapi = 24
+android.ndk = 28c
 android.archs = arm64-v8a
 android.accept_sdk_license = True
 android.release_artifact = apk
