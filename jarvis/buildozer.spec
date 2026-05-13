@@ -5,7 +5,7 @@ package.domain = org.jarvis
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,ico
 version = 1.0
-requirements = python3,kivy==2.3.0,pillow==10.1.0,urllib3,certifi,charset-normalizer,idna,requests
+requirements = python3,kivy==2.3.0,urllib3,certifi,charset-normalizer,idna,requests
 
 orientation = portrait
 
