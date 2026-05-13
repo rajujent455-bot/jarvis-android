@@ -7,57 +7,28 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install deps
+      - name: Install
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y \
-            git zip unzip \
-            openjdk-17-jdk \
-            autoconf libtool pkg-config \
-            zlib1g-dev libncurses5-dev \
-            libncursesw5-dev libtinfo5 \
-            cmake libffi-dev libssl-dev \
-            build-essential ccache \
-            python3-pip python3-dev \
-            libltdl-dev
-          pip install --upgrade pip setuptools wheel
-          pip install buildozer==1.5.0
-          pip install cython==0.29.36
-
-      - name: Cache buildozer
-        uses: actions/cache@v4
-        with:
-          path: ~/.buildozer
-          key: buildozer-${{ runner.os }}-v3
+          sudo apt-get install -y git zip unzip openjdk-11-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev build-essential ccache
+          pip install buildozer==1.5.0 cython==0.29.36
 
       - name: Build APK
         working-directory: jarvis
         run: |
-          buildozer android debug 2>&1 | tee build.log
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "===== ERROR LINES ====="
-            grep -i "error\|exception\|traceback" build.log | tail -50
-            exit 1
-          fi
+          yes | buildozer android debug
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: JARVIS-APK
           path: jarvis/bin/*.apk
           retention-days: 30
-
-      - name: Upload log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: jarvis/build.log
