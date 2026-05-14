@@ -45,13 +45,19 @@ jobs:
       - name: Build APK
         working-directory: jarvis
         run: |
+          set -o pipefail
           buildozer android debug 2>&1 | tee build.log
+          echo "=== BUILD COMPLETE ==="
+          find . -name "*.apk" 2>/dev/null || echo "NO APK FOUND"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: JARVIS-APK
-          path: jarvis/bin/*.apk
+          path: |
+            jarvis/bin/*.apk
+            jarvis/.buildozer/android/platform/build-arm64-v8a/dists/**/*.apk
+          if-no-files-found: warn
           retention-days: 30
 
       - name: Upload log if failed
