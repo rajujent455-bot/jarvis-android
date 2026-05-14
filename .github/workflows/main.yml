@@ -2,38 +2,36 @@ name: Build JARVIS APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-      - name: Cache buildozer
-        uses: actions/cache@v4
-        with:
-          path: jarvis/.buildozer
-          key: buildozer-${{ runner.os }}-${{ hashFiles('jarvis/buildozer.spec') }}
-          restore-keys: buildozer-${{ runner.os }}-
-
-      - name: Build APK using official Kivy Docker image
+      # ── FIX 2: NotoEmoji font download ─────────────────────────────────
+      - name: Download NotoEmoji font
         run: |
-          docker run --rm \
-            --volume ${{ github.workspace }}/jarvis:/home/user/hostcwd \
-            kivy/buildozer \
-            android debug
+          mkdir -p assets/fonts
+          curl -L \
+            "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf" \
+            -o assets/fonts/NotoEmoji.ttf
+          echo "Font size: $(du -sh assets/fonts/NotoEmoji.ttf)"
 
-      - name: Find APK
-        run: |
-          find ${{ github.workspace }}/jarvis -name "*.apk" 2>/dev/null || echo "NO APK"
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      # ── Build APK ───────────────────────────────────────────────────────
+      - name: Build with Buildozer
+        uses: ArtemSBulgakov/buildozer-action@v1
+        id: buildozer
         with:
-          name: JARVIS-APK
-          path: jarvis/bin/*.apk
-          if-no-files-found: warn
-          retention-days: 30
+          command: buildozer android debug
+          buildozer_version: 1.5.0
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: jarvis-apk
+          path: ${{ steps.buildozer.outputs.filename }}
