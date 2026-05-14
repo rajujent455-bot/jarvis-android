@@ -7,7 +7,7 @@ source.include_exts = py,png,jpg,kv,atlas,json,ico
 version = 1.0
 
 # pypdf aur requests add kiye — anthropic SDK hataya (urllib use hoga)
-requirements = python3,kivy==2.3.0,requests,pypdf
+requirements = python3,kivy,requests,pypdf
 
 orientation = portrait
 android.permissions = INTERNET,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,RECORD_AUDIO
