@@ -1,13 +1,13 @@
 """
 J.A.R.V.I.S Android v1.0
 Kivy-based Android App — Full Featured
+Fixes: urllib API call, FileChooser path, menu bug
 """
 
 import os, json, datetime, threading, re, time
 import urllib.request, urllib.parse, html
 from pathlib import Path
 
-# ── Kivy setup (before any kivy import) ───────────────────────────────────────
 os.environ['KIVY_NO_ENV_CONFIG'] = '1'
 
 from kivy.app import App
@@ -30,7 +30,6 @@ from kivy.graphics import Color, RoundedRectangle, Rectangle
 from kivy.uix.widget import Widget
 from kivy.properties import StringProperty, BooleanProperty
 
-# ── Android-specific imports ───────────────────────────────────────────────────
 try:
     from android.permissions import request_permissions, Permission
     from android.storage import primary_external_storage_path
@@ -96,7 +95,34 @@ def save_cfg(cfg):
 CFG = load_cfg()
 
 # ══════════════════════════════════════════════════════════════════
-# BACKEND CLASSES (same logic as Windows version)
+# CLAUDE API — Direct urllib (no SDK, works on Android)
+# ══════════════════════════════════════════════════════════════════
+
+def call_claude(messages, system_prompt, api_key):
+    """Anthropic API ko seedha urllib se call karo — SDK nahi chahiye."""
+    data = json.dumps({
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 1000,
+        "system": system_prompt,
+        "messages": messages
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=data,
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        result = json.loads(r.read().decode())
+        return result["content"][0]["text"]
+
+
+# ══════════════════════════════════════════════════════════════════
+# BACKEND CLASSES
 # ══════════════════════════════════════════════════════════════════
 
 class Search:
@@ -118,16 +144,17 @@ class Search:
         return "Search result nahi mila."
 
     @staticmethod
-    def smart(query: str, client) -> str:
+    def smart(query: str, api_key: str) -> str:
         raw = Search.raw(query)
-        if not client: return raw
+        if not api_key: return raw
         try:
-            import anthropic
-            r = client.messages.create(
-                model="claude-sonnet-4-6", max_tokens=800,
+            reply = call_claude(
                 messages=[{"role": "user", "content":
-                    f'Problem: "{query}"\n\nResults:\n{raw}\n\nHindi mein best solution do. Step-by-step.'}])
-            return r.content[0].text
+                    f'Problem: "{query}"\n\nResults:\n{raw}\n\nHindi mein best solution do. Step-by-step.'}],
+                system_prompt="Tu ek helpful assistant hai. Hindi mein jawab do.",
+                api_key=api_key
+            )
+            return reply
         except Exception as e:
             return raw
 
@@ -263,7 +290,6 @@ class PDFTools:
             ]
             for k, v in meta.items():
                 if v: lines.append(f"  {str(k).replace('/','')}: {str(v)[:60]}")
-            # Signature check
             root = r.trailer.get("/Root", {})
             if "/AcroForm" in root:
                 acro = root["/AcroForm"]
@@ -311,7 +337,7 @@ Aaj: {now}
 
 Tu ye kaam karta hai:
 1. FILES: Create, read, delete files
-2. REPORTS: Reports save karo  
+2. REPORTS: Reports save karo
 3. WEB SEARCH: Internet search
 4. SYSTEM: Phone/device info
 5. WEATHER: Mausam batao
@@ -332,7 +358,7 @@ Phir Hindi/Hinglish mein explain karo.
 Hamesha "{CFG['name']}" bolo. Short aur helpful raho."""
 
 
-def do_actions(text: str, client, log_fn=None) -> str:
+def do_actions(text: str, api_key: str, log_fn=None) -> str:
     results = []
     for line in text.split("\n"):
         l = line.strip()
@@ -343,7 +369,7 @@ def do_actions(text: str, client, log_fn=None) -> str:
         elif l.startswith("ACTION:SYSTEM:"):
             results.append(SysInfo.get())
         elif l.startswith("ACTION:SEARCH:"):
-            results.append(Search.smart(l[14:], client))
+            results.append(Search.smart(l[14:], api_key))
         elif l.startswith("ACTION:WEATHER:"):
             results.append(Weather.get(l[15:]))
         elif l.startswith("ACTION:NEWS:"):
@@ -362,22 +388,6 @@ def do_actions(text: str, client, log_fn=None) -> str:
 # ══════════════════════════════════════════════════════════════════
 # UI WIDGETS
 # ══════════════════════════════════════════════════════════════════
-
-class RoundedBox(Widget):
-    """Custom rounded background widget."""
-    def __init__(self, bg_color="#0e1428", radius=12, **kwargs):
-        super().__init__(**kwargs)
-        self._bg = bg_color
-        self._radius = radius
-        self.bind(pos=self._redraw, size=self._redraw)
-
-    def _redraw(self, *a):
-        self.canvas.before.clear()
-        with self.canvas.before:
-            Color(*get_color_from_hex(self._bg))
-            RoundedRectangle(pos=self.pos, size=self.size,
-                             radius=[self._radius])
-
 
 class JarvisButton(Button):
     def __init__(self, **kwargs):
@@ -420,57 +430,37 @@ class JarvisInput(TextInput):
 class ChatScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.history  = []
-        self.client   = None
+        self.history = []
         self._build()
-        self._init_client()
-
-    def _init_client(self):
-        if CFG.get("api_key"):
-            try:
-                import anthropic
-                self.client = anthropic.Anthropic(api_key=CFG["api_key"])
-            except: self.client = None
 
     def _build(self):
-        root = BoxLayout(orientation="vertical",
-                         spacing=0,
-                         padding=0)
-        root.canvas.before.clear()
+        root = BoxLayout(orientation="vertical", spacing=0, padding=0)
         with root.canvas.before:
             Color(*c("bg"))
-            Rectangle(pos=root.pos, size=root.size)
-        root.bind(pos=lambda *a: self._bg_update(root),
-                  size=lambda *a: self._bg_update(root))
+            self._bg_rect = Rectangle(pos=root.pos, size=root.size)
+        root.bind(pos=lambda w, v: setattr(self._bg_rect, 'pos', v),
+                  size=lambda w, v: setattr(self._bg_rect, 'size', v))
 
-        # ── Header ────────────────────────────────────────────────
+        # Header
         hdr = BoxLayout(size_hint_y=None, height=dp(56),
-                        padding=[dp(14), dp(8)],
-                        spacing=dp(10))
+                        padding=[dp(14), dp(8)], spacing=dp(10))
         with hdr.canvas.before:
             Color(*c("bar"))
-            Rectangle(pos=hdr.pos, size=hdr.size)
-        hdr.bind(pos=lambda *a: self._bar_update(hdr),
-                 size=lambda *a: self._bar_update(hdr))
+            hdr_rect = Rectangle(pos=hdr.pos, size=hdr.size)
+        hdr.bind(pos=lambda w, v: setattr(hdr_rect, 'pos', v),
+                 size=lambda w, v: setattr(hdr_rect, 'size', v))
 
-        title = Label(text="◈ J.A.R.V.I.S",
-                      font_size=sp(18), bold=True,
-                      color=c("accent"),
-                      size_hint_x=0.6, halign="left",
-                      valign="middle")
+        title = Label(text="◈ J.A.R.V.I.S", font_size=sp(18), bold=True,
+                      color=c("accent"), size_hint_x=0.6,
+                      halign="left", valign="middle")
         title.bind(size=title.setter("text_size"))
 
-        menu_btn = JarvisButton(text="☰",
-                                size_hint_x=None, width=dp(42),
-                                height=dp(40),
-                                bg_color=C["sidebar"])
-        menu_btn.bind(on_press=lambda *a:
-            self.manager.app_ref.open_menu())
+        menu_btn = JarvisButton(text="☰", size_hint_x=None, width=dp(42),
+                                height=dp(40), bg_color=C["sidebar"])
+        menu_btn.bind(on_press=lambda *a: self.manager.app_ref.open_menu())
 
-        settings_btn = JarvisButton(text="⚙",
-                                    size_hint_x=None, width=dp(42),
-                                    height=dp(40),
-                                    bg_color=C["sidebar"])
+        settings_btn = JarvisButton(text="⚙", size_hint_x=None, width=dp(42),
+                                    height=dp(40), bg_color=C["sidebar"])
         settings_btn.bind(on_press=lambda *a:
             setattr(self.manager, "current", "settings"))
 
@@ -479,67 +469,58 @@ class ChatScreen(Screen):
         hdr.add_widget(settings_btn)
         root.add_widget(hdr)
 
-        # ── Chat area ─────────────────────────────────────────────
+        # Chat scroll area
         scroll = ScrollView(size_hint=(1, 1), do_scroll_x=False)
-        self._chat_layout = BoxLayout(
-            orientation="vertical",
-            size_hint_y=None,
-            spacing=dp(8),
-            padding=[dp(10), dp(10)])
-        self._chat_layout.bind(
-            minimum_height=self._chat_layout.setter("height"))
+        self._chat_layout = BoxLayout(orientation="vertical",
+                                      size_hint_y=None, spacing=dp(8),
+                                      padding=[dp(10), dp(10)])
+        self._chat_layout.bind(minimum_height=self._chat_layout.setter("height"))
         scroll.add_widget(self._chat_layout)
         self._scroll = scroll
         root.add_widget(scroll)
 
-        # ── Quick actions ─────────────────────────────────────────
+        # Quick actions bar
         qa = BoxLayout(size_hint_y=None, height=dp(46),
                        spacing=dp(4), padding=[dp(6), dp(4)])
         with qa.canvas.before:
             Color(*c("sidebar"))
-            Rectangle(pos=qa.pos, size=qa.size)
-        qa.bind(pos=lambda w, *a: self._rect_update(w),
-                size=lambda w, *a: self._rect_update(w))
+            qa_rect = Rectangle(pos=qa.pos, size=qa.size)
+        qa.bind(pos=lambda w, v: setattr(qa_rect, 'pos', v),
+                size=lambda w, v: setattr(qa_rect, 'size', v))
 
         for lbl, cmd in [("🌤", "Udaipur ka mausam batao"),
                           ("📰", "Aaj ki India news do"),
                           ("💻", "System info do"),
                           ("📊", "Aaj ka report banao"),
                           ("📄", "PDF tools batao"),
-                          ("🔍", "Search")]:
-            b = JarvisButton(text=lbl,
-                             size_hint_x=None, width=dp(46),
+                          ("🔍", "Web search karo")]:
+            b = JarvisButton(text=lbl, size_hint_x=None, width=dp(46),
                              height=dp(36), bg_color=C["bar"],
                              radius=8, font_size=sp(16))
-            b.bind(on_press=lambda btn, c_=cmd:
-                   (self._entry.text.__setattr__,
-                    None) or self._quick_send(c_))
+            b.bind(on_press=lambda btn, c_=cmd: self._quick_send(c_))
             qa.add_widget(b)
         root.add_widget(qa)
 
-        # ── Input row ─────────────────────────────────────────────
+        # Input row
         inp_row = BoxLayout(size_hint_y=None, height=dp(56),
                             spacing=dp(6), padding=[dp(8), dp(6)])
         with inp_row.canvas.before:
             Color(*c("bar"))
-            Rectangle(pos=inp_row.pos, size=inp_row.size)
-        inp_row.bind(pos=lambda w, *a: self._rect_update(w),
-                     size=lambda w, *a: self._rect_update(w))
+            inp_rect = Rectangle(pos=inp_row.pos, size=inp_row.size)
+        inp_row.bind(pos=lambda w, v: setattr(inp_rect, 'pos', v),
+                     size=lambda w, v: setattr(inp_rect, 'size', v))
 
         self._entry = JarvisInput(
             hint_text=f"Kuch poochho {CFG.get('name','Sir')}...",
-            multiline=False,
-            size_hint_x=1)
+            multiline=False, size_hint_x=1)
         self._entry.bind(on_text_validate=self._send)
 
-        send_btn = JarvisButton(text="▶",
-                                size_hint_x=None, width=dp(50),
-                                bg_color=C["btn2"])
+        send_btn = JarvisButton(text="▶", size_hint_x=None,
+                                width=dp(50), bg_color=C["btn2"])
         send_btn.bind(on_press=self._send)
 
-        voice_btn = JarvisButton(text="🎤",
-                                 size_hint_x=None, width=dp(50),
-                                 bg_color=C["sidebar"])
+        voice_btn = JarvisButton(text="🎤", size_hint_x=None,
+                                 width=dp(50), bg_color=C["sidebar"])
         voice_btn.bind(on_press=self._voice)
 
         inp_row.add_widget(self._entry)
@@ -549,46 +530,21 @@ class ChatScreen(Screen):
 
         self.add_widget(root)
 
-        # Welcome message
         Clock.schedule_once(lambda dt: self._add_msg(
             "◈ JARVIS",
             f"Namaste {CFG.get('name','Sir')}! Main J.A.R.V.I.S hoon.\n"
             f"API key settings mein daalna na bhoolen! 🚀",
             C["tag_j"]), 0.5)
 
-    def _bg_update(self, w):
-        w.canvas.before.clear()
-        with w.canvas.before:
-            Color(*c("bg"))
-            Rectangle(pos=w.pos, size=w.size)
-
-    def _bar_update(self, w):
-        w.canvas.before.clear()
-        with w.canvas.before:
-            Color(*c("bar"))
-            Rectangle(pos=w.pos, size=w.size)
-
-    def _rect_update(self, w):
-        w.canvas.before.clear()
-        col_map = {"sidebar": C["sidebar"], "bar": C["bar"]}
-        col = C["bar"]
-        with w.canvas.before:
-            Color(*get_color_from_hex(col))
-            Rectangle(pos=w.pos, size=w.size)
-
     def _quick_send(self, cmd):
         self._entry.text = cmd
         self._send()
 
     def _add_msg(self, sender, text, color_hex=None):
-        """Chat mein message add karo."""
         color = color_hex or C["fg"]
-        box = BoxLayout(orientation="vertical",
-                        size_hint_y=None,
-                        padding=[dp(10), dp(6)],
-                        spacing=dp(2))
+        box = BoxLayout(orientation="vertical", size_hint_y=None,
+                        padding=[dp(10), dp(6)], spacing=dp(2))
 
-        # Sender label
         s_lbl = Label(
             text=f"{sender}  [{datetime.datetime.now():%H:%M}]",
             font_size=sp(10), bold=True,
@@ -597,37 +553,23 @@ class ChatScreen(Screen):
             halign="left", valign="middle")
         s_lbl.bind(size=s_lbl.setter("text_size"))
 
-        # Message label
-        m_lbl = Label(
-            text=text,
-            font_size=sp(13),
-            color=c("fg"),
-            size_hint_y=None,
-            halign="left", valign="top",
-            markup=True)
+        m_lbl = Label(text=text, font_size=sp(13), color=c("fg"),
+                      size_hint_y=None, halign="left", valign="top")
         m_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
         m_lbl.bind(texture_size=lambda w, s: setattr(w, "height", s[1] + dp(4)))
 
         box.add_widget(s_lbl)
         box.add_widget(m_lbl)
 
-        # Background
         with box.canvas.before:
             Color(*get_color_from_hex(C["card"]))
-            RoundedRectangle(pos=box.pos, size=box.size, radius=[dp(8)])
-        box.bind(pos=lambda w, *a: self._msg_bg(w, color),
-                 size=lambda w, *a: self._msg_bg(w, color))
+            box_rect = RoundedRectangle(pos=box.pos, size=box.size, radius=[dp(8)])
+        box.bind(pos=lambda w, v: setattr(box_rect, 'pos', v),
+                 size=lambda w, v: setattr(box_rect, 'size', v))
         box.bind(minimum_height=box.setter("height"))
 
         self._chat_layout.add_widget(box)
-        Clock.schedule_once(lambda dt: setattr(
-            self._scroll, "scroll_y", 0), 0.1)
-
-    def _msg_bg(self, w, color_hex):
-        w.canvas.before.clear()
-        with w.canvas.before:
-            Color(*get_color_from_hex(C["card"]))
-            RoundedRectangle(pos=w.pos, size=w.size, radius=[dp(8)])
+        Clock.schedule_once(lambda dt: setattr(self._scroll, "scroll_y", 0), 0.1)
 
     def _send(self, *a):
         txt = self._entry.text.strip()
@@ -638,41 +580,41 @@ class ChatScreen(Screen):
         threading.Thread(target=self._ai_call, args=(txt,), daemon=True).start()
 
     def _ai_call(self, user_msg):
-        if not CFG.get("api_key"):
+        api_key = CFG.get("api_key", "")
+        if not api_key:
             Clock.schedule_once(lambda dt: self._replace_last(
                 "⚠ API key nahi hai! Settings mein daalo."), 0)
             return
         try:
-            import anthropic
-            if not self.client:
-                self.client = anthropic.Anthropic(api_key=CFG["api_key"])
             self.history.append({"role": "user", "content": user_msg})
             if len(self.history) > 20:
                 self.history = self.history[-20:]
-            r = self.client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=1000,
-                system=get_prompt(),
-                messages=self.history)
-            reply = r.content[0].text
+
+            reply = call_claude(
+                messages=self.history,
+                system_prompt=get_prompt(),
+                api_key=api_key
+            )
+
             self.history.append({"role": "assistant", "content": reply})
-            # Do actions
-            action_result = do_actions(reply, self.client,
-                                       log_fn=lambda m: Clock.schedule_once(
-                                           lambda dt, msg=m: self._add_msg("⚡", msg, C["tag_a"]), 0))
-            display = reply
-            # Remove action lines from display
+
+            action_result = do_actions(
+                reply, api_key,
+                log_fn=lambda m: Clock.schedule_once(
+                    lambda dt, msg=m: self._add_msg("⚡", msg, C["tag_a"]), 0))
+
             display = "\n".join(l for l in reply.split("\n")
                                 if not l.strip().startswith("ACTION:"))
             if action_result:
                 display = display.strip() + f"\n\n⚡ {action_result}"
+
             Clock.schedule_once(lambda dt, d=display: self._replace_last(d), 0)
+
         except Exception as e:
             Clock.schedule_once(
                 lambda dt: self._replace_last(f"❌ Error: {e}"), 0)
 
     def _replace_last(self, text):
-        """Last message (thinking...) ko replace karo."""
         children = self._chat_layout.children
         if children:
             last = children[0]
@@ -684,15 +626,7 @@ class ChatScreen(Screen):
         self._add_msg("◈ JARVIS", text, C["tag_j"])
 
     def _voice(self, *a):
-        """Voice input — Android SpeechRecognizer."""
-        try:
-            if IS_ANDROID:
-                from android.runnable import run_on_ui_thread
-                self._add_msg("⚡", "🎤 Voice feature coming soon!", C["tag_a"])
-            else:
-                self._add_msg("⚡", "🎤 Voice sirf Android pe kaam karta hai.", C["tag_a"])
-        except Exception as e:
-            self._add_msg("❌", str(e), C["tag_e"])
+        self._add_msg("⚡", "🎤 Voice feature coming soon!", C["tag_a"])
 
 
 class SettingsScreen(Screen):
@@ -704,33 +638,28 @@ class SettingsScreen(Screen):
         root = BoxLayout(orientation="vertical")
         with root.canvas.before:
             Color(*c("bg"))
-            Rectangle(pos=root.pos, size=root.size)
-        root.bind(pos=lambda *a: self._bg(root),
-                  size=lambda *a: self._bg(root))
+            bg_rect = Rectangle(pos=root.pos, size=root.size)
+        root.bind(pos=lambda w, v: setattr(bg_rect, 'pos', v),
+                  size=lambda w, v: setattr(bg_rect, 'size', v))
 
-        # Header
         hdr = BoxLayout(size_hint_y=None, height=dp(56),
                         padding=[dp(14), dp(8)])
         with hdr.canvas.before:
             Color(*c("bar"))
-            Rectangle(pos=hdr.pos, size=hdr.size)
-        hdr.bind(pos=lambda *a: self._bar(hdr),
-                 size=lambda *a: self._bar(hdr))
+            hdr_rect = Rectangle(pos=hdr.pos, size=hdr.size)
+        hdr.bind(pos=lambda w, v: setattr(hdr_rect, 'pos', v),
+                 size=lambda w, v: setattr(hdr_rect, 'size', v))
 
         back = JarvisButton(text="← Back", size_hint_x=None,
                             width=dp(80), bg_color=C["sidebar"])
-        back.bind(on_press=lambda *a:
-            setattr(self.manager, "current", "chat"))
+        back.bind(on_press=lambda *a: setattr(self.manager, "current", "chat"))
         hdr.add_widget(back)
-        hdr.add_widget(Label(text="⚙  Settings",
-                             font_size=sp(16), bold=True,
-                             color=c("accent")))
+        hdr.add_widget(Label(text="⚙  Settings", font_size=sp(16),
+                             bold=True, color=c("accent")))
         root.add_widget(hdr)
 
-        # Scroll
         sv = ScrollView()
-        sl = BoxLayout(orientation="vertical",
-                       size_hint_y=None,
+        sl = BoxLayout(orientation="vertical", size_hint_y=None,
                        padding=dp(14), spacing=dp(12))
         sl.bind(minimum_height=sl.setter("height"))
 
@@ -745,10 +674,10 @@ class SettingsScreen(Screen):
             sl.add_widget(inp)
             return inp
 
-        self._api     = field("🔑 Anthropic API Key", "api_key", pw=True)
-        self._name    = field("👤 Aapka Naam", "name")
-        self._gmail   = field("📧 Gmail ID", "gmail")
-        self._gpass   = field("🔒 Gmail App Password", "gmail_pass", pw=True)
+        self._api   = field("🔑 Anthropic API Key", "api_key", pw=True)
+        self._name  = field("👤 Aapka Naam", "name")
+        self._gmail = field("📧 Gmail ID", "gmail")
+        self._gpass = field("🔒 Gmail App Password", "gmail_pass", pw=True)
 
         save_btn = JarvisButton(text="💾  SAVE SETTINGS",
                                 bg_color=C["btn2"],
@@ -757,29 +686,15 @@ class SettingsScreen(Screen):
         sl.add_widget(Label(size_hint_y=None, height=dp(10)))
         sl.add_widget(save_btn)
 
-        # About card
         about = Label(
             text="J.A.R.V.I.S Android v1.0\nPowered by Claude AI\nBuilt with Kivy + Python",
             font_size=sp(10), color=c("border"),
-            size_hint_y=None, height=dp(60),
-            halign="center")
+            size_hint_y=None, height=dp(60), halign="center")
         sl.add_widget(about)
 
         sv.add_widget(sl)
         root.add_widget(sv)
         self.add_widget(root)
-
-    def _bg(self, w):
-        w.canvas.before.clear()
-        with w.canvas.before:
-            Color(*c("bg"))
-            Rectangle(pos=w.pos, size=w.size)
-
-    def _bar(self, w):
-        w.canvas.before.clear()
-        with w.canvas.before:
-            Color(*c("bar"))
-            Rectangle(pos=w.pos, size=w.size)
 
     def _save(self, *a):
         CFG["api_key"]    = self._api.text.strip()
@@ -789,60 +704,59 @@ class SettingsScreen(Screen):
         save_cfg(CFG)
         popup = Popup(
             title="✅ Saved!",
-            content=Label(text="Settings save ho gayi!\nJARVIS restart karo.", color=c("fg")),
+            content=Label(text="Settings save ho gayi!\nJARVIS restart karo.",
+                          color=c("fg")),
             size_hint=(0.7, 0.3))
         popup.open()
-        # Re-init client
-        chat = self.manager.get_screen("chat")
-        chat._init_client()
 
 
 class PDFScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._selected_pdfs = []
         self._build()
 
     def _build(self):
         root = BoxLayout(orientation="vertical")
         with root.canvas.before:
             Color(*c("bg"))
-            Rectangle(pos=root.pos, size=root.size)
-        root.bind(pos=lambda *a: self._bg(root),
-                  size=lambda *a: self._bg(root))
+            bg_rect = Rectangle(pos=root.pos, size=root.size)
+        root.bind(pos=lambda w, v: setattr(bg_rect, 'pos', v),
+                  size=lambda w, v: setattr(bg_rect, 'size', v))
 
-        # Header
         hdr = BoxLayout(size_hint_y=None, height=dp(56),
                         padding=[dp(14), dp(8)])
         with hdr.canvas.before:
             Color(*c("bar"))
-            Rectangle(pos=hdr.pos, size=hdr.size)
-        hdr.bind(pos=lambda *a: self._bar(hdr),
-                 size=lambda *a: self._bar(hdr))
+            hdr_rect = Rectangle(pos=hdr.pos, size=hdr.size)
+        hdr.bind(pos=lambda w, v: setattr(hdr_rect, 'pos', v),
+                 size=lambda w, v: setattr(hdr_rect, 'size', v))
+
         back = JarvisButton(text="← Back", size_hint_x=None,
                             width=dp(80), bg_color=C["sidebar"])
-        back.bind(on_press=lambda *a:
-            setattr(self.manager, "current", "chat"))
+        back.bind(on_press=lambda *a: setattr(self.manager, "current", "chat"))
         hdr.add_widget(back)
-        hdr.add_widget(Label(text="📄  PDF Manager",
-                             font_size=sp(16), bold=True,
-                             color=c("accent")))
+        hdr.add_widget(Label(text="📄  PDF Manager", font_size=sp(16),
+                             bold=True, color=c("accent")))
         root.add_widget(hdr)
 
-        # File chooser
-        self._fc = FileChooserListView(
-            path=str(Path.home()),
-            filters=["*.pdf"],
-            size_hint_y=0.45)
+        # FIX: Android pe sahi path
+        if IS_ANDROID:
+            from android.storage import primary_external_storage_path
+            start_path = primary_external_storage_path()
+        else:
+            start_path = str(Path.home())
+
+        self._fc = FileChooserListView(path=start_path,
+                                       filters=["*.pdf"],
+                                       size_hint_y=0.45)
         root.add_widget(self._fc)
 
-        # Result label
         sv = ScrollView(size_hint_y=0.3)
         self._result = Label(
             text="PDF select karo upar se, phir action choose karo.",
             font_size=sp(12), color=c("fg"),
-            size_hint_y=None, halign="left",
-            valign="top", padding=(dp(10), dp(6)))
+            size_hint_y=None, halign="left", valign="top",
+            padding=(dp(10), dp(6)))
         self._result.bind(
             width=lambda w, v: setattr(w, "text_size", (v, None)))
         self._result.bind(
@@ -850,15 +764,13 @@ class PDFScreen(Screen):
         sv.add_widget(self._result)
         root.add_widget(sv)
 
-        # Buttons
-        btn_row = GridLayout(cols=2, size_hint_y=None,
-                             height=dp(110), spacing=dp(6),
-                             padding=[dp(8), dp(4)])
+        btn_row = GridLayout(cols=2, size_hint_y=None, height=dp(110),
+                             spacing=dp(6), padding=[dp(8), dp(4)])
         for lbl, fn, col in [
-            ("📋 Info",        self._info,    C["btn"]),
-            ("📝 Extract Text",self._extract, C["btn2"]),
-            ("🔗 Merge PDFs",  self._merge,   "#1b5e20"),
-            ("🔍 Search PDF",  self._search_in_pdf, "#4a148c"),
+            ("📋 Info",         self._info,         C["btn"]),
+            ("📝 Extract Text", self._extract,       C["btn2"]),
+            ("🔗 Merge PDFs",   self._merge,         "#1b5e20"),
+            ("🔍 Search PDF",   self._search_in_pdf, "#4a148c"),
         ]:
             b = JarvisButton(text=lbl, bg_color=col,
                              size_hint_y=None, height=dp(46))
@@ -866,18 +778,6 @@ class PDFScreen(Screen):
             btn_row.add_widget(b)
         root.add_widget(btn_row)
         self.add_widget(root)
-
-    def _bg(self, w):
-        w.canvas.before.clear()
-        with w.canvas.before:
-            Color(*c("bg"))
-            Rectangle(pos=w.pos, size=w.size)
-
-    def _bar(self, w):
-        w.canvas.before.clear()
-        with w.canvas.before:
-            Color(*c("bar"))
-            Rectangle(pos=w.pos, size=w.size)
 
     def _get_selected(self):
         sel = self._fc.selection
@@ -889,21 +789,17 @@ class PDFScreen(Screen):
     def _info(self):
         path = self._get_selected()
         if path:
-            threading.Thread(target=self._run_info, args=(path,), daemon=True).start()
-
-    def _run_info(self, path):
-        result = PDFTools.info(path)
-        Clock.schedule_once(lambda dt: setattr(self._result, "text", result), 0)
+            threading.Thread(target=lambda: Clock.schedule_once(
+                lambda dt: setattr(self._result, "text",
+                                   PDFTools.info(path)), 0), daemon=True).start()
 
     def _extract(self):
         path = self._get_selected()
         if path:
             self._result.text = "⏳ Text extract ho raha hai..."
-            threading.Thread(target=self._run_extract, args=(path,), daemon=True).start()
-
-    def _run_extract(self, path):
-        result = PDFTools.extract_text(path)
-        Clock.schedule_once(lambda dt: setattr(self._result, "text", result), 0)
+            threading.Thread(target=lambda: Clock.schedule_once(
+                lambda dt: setattr(self._result, "text",
+                                   PDFTools.extract_text(path)), 0), daemon=True).start()
 
     def _merge(self):
         sel = self._fc.selection
@@ -911,29 +807,31 @@ class PDFScreen(Screen):
             self._result.text = "⚠ Kam se kam 2 PDFs select karo!"
             return
         self._result.text = "⏳ Merge ho raha hai..."
-        threading.Thread(target=self._run_merge, args=(sel,), daemon=True).start()
-
-    def _run_merge(self, paths):
-        result = PDFTools.merge(paths)
-        Clock.schedule_once(lambda dt: setattr(self._result, "text", result), 0)
+        threading.Thread(target=lambda: Clock.schedule_once(
+            lambda dt: setattr(self._result, "text",
+                               PDFTools.merge(sel)), 0), daemon=True).start()
 
     def _search_in_pdf(self):
         path = self._get_selected()
         if not path: return
-        popup_content = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(8))
-        inp = JarvisInput(hint_text="Search karna kya hai?", size_hint_y=None, height=dp(44))
+        content = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(8))
+        inp = JarvisInput(hint_text="Search karna kya hai?",
+                          size_hint_y=None, height=dp(44))
+        popup = Popup(title="🔍 PDF Search", content=content,
+                      size_hint=(0.85, 0.3))
+
         def do_search(*a):
             keyword = inp.text.strip()
             if not keyword: return
             popup.dismiss()
             self._result.text = f"🔍 '{keyword}' dhoondh raha hoon..."
-            threading.Thread(target=self._run_search, args=(path, keyword), daemon=True).start()
+            threading.Thread(target=self._run_search,
+                             args=(path, keyword), daemon=True).start()
+
         btn = JarvisButton(text="Search", bg_color=C["btn2"])
         btn.bind(on_press=do_search)
-        popup_content.add_widget(inp)
-        popup_content.add_widget(btn)
-        popup = Popup(title="🔍 PDF Search", content=popup_content,
-                      size_hint=(0.85, 0.3))
+        content.add_widget(inp)
+        content.add_widget(btn)
         popup.open()
 
     def _run_search(self, path, keyword):
@@ -966,37 +864,31 @@ class FilesScreen(Screen):
         root = BoxLayout(orientation="vertical")
         with root.canvas.before:
             Color(*c("bg"))
-            Rectangle(pos=root.pos, size=root.size)
-        root.bind(pos=lambda *a: self._bg(root),
-                  size=lambda *a: self._bg(root))
+            bg_rect = Rectangle(pos=root.pos, size=root.size)
+        root.bind(pos=lambda w, v: setattr(bg_rect, 'pos', v),
+                  size=lambda w, v: setattr(bg_rect, 'size', v))
 
         hdr = BoxLayout(size_hint_y=None, height=dp(56),
                         padding=[dp(14), dp(8)])
         with hdr.canvas.before:
             Color(*c("bar"))
-            Rectangle(pos=hdr.pos, size=hdr.size)
-        hdr.bind(pos=lambda *a: self._bar(hdr),
-                 size=lambda *a: self._bar(hdr))
+            hdr_rect = Rectangle(pos=hdr.pos, size=hdr.size)
+        hdr.bind(pos=lambda w, v: setattr(hdr_rect, 'pos', v),
+                 size=lambda w, v: setattr(hdr_rect, 'size', v))
+
         back = JarvisButton(text="← Back", size_hint_x=None,
                             width=dp(80), bg_color=C["sidebar"])
-        back.bind(on_press=lambda *a:
-            setattr(self.manager, "current", "chat"))
+        back.bind(on_press=lambda *a: setattr(self.manager, "current", "chat"))
         hdr.add_widget(back)
-        hdr.add_widget(Label(text="📁  JARVIS Files",
-                             font_size=sp(16), bold=True,
-                             color=c("accent")))
+        hdr.add_widget(Label(text="📁  JARVIS Files", font_size=sp(16),
+                             bold=True, color=c("accent")))
         root.add_widget(hdr)
 
-        # File list
-        self._fc = FileChooserListView(
-            path=str(FILES_DIR),
-            size_hint_y=0.65)
+        self._fc = FileChooserListView(path=str(FILES_DIR), size_hint_y=0.65)
         root.add_widget(self._fc)
 
-        # Actions
-        btn_row = GridLayout(cols=2, size_hint_y=None,
-                             height=dp(56), spacing=dp(6),
-                             padding=[dp(8), dp(4)])
+        btn_row = GridLayout(cols=2, size_hint_y=None, height=dp(56),
+                             spacing=dp(6), padding=[dp(8), dp(4)])
         read_btn = JarvisButton(text="📖 Read File", bg_color=C["btn"])
         read_btn.bind(on_press=self._read_file)
         del_btn = JarvisButton(text="🗑 Delete", bg_color="#b71c1c")
@@ -1006,10 +898,9 @@ class FilesScreen(Screen):
         root.add_widget(btn_row)
 
         sv = ScrollView(size_hint_y=0.25)
-        self._result = Label(text="File select karo.",
-                             font_size=sp(12), color=c("fg"),
-                             size_hint_y=None, halign="left",
-                             valign="top")
+        self._result = Label(text="File select karo.", font_size=sp(12),
+                             color=c("fg"), size_hint_y=None,
+                             halign="left", valign="top")
         self._result.bind(
             width=lambda w, v: setattr(w, "text_size", (v, None)))
         self._result.bind(
@@ -1018,26 +909,13 @@ class FilesScreen(Screen):
         root.add_widget(sv)
         self.add_widget(root)
 
-    def _bg(self, w):
-        w.canvas.before.clear()
-        with w.canvas.before:
-            Color(*c("bg"))
-            Rectangle(pos=w.pos, size=w.size)
-
-    def _bar(self, w):
-        w.canvas.before.clear()
-        with w.canvas.before:
-            Color(*c("bar"))
-            Rectangle(pos=w.pos, size=w.size)
-
     def _read_file(self, *a):
         sel = self._fc.selection
         if not sel:
             self._result.text = "⚠ File select karo!"
             return
         try:
-            content = Path(sel[0]).read_text(encoding="utf-8")[:1000]
-            self._result.text = content
+            self._result.text = Path(sel[0]).read_text(encoding="utf-8")[:1000]
         except Exception as e:
             self._result.text = f"Read error: {e}"
 
@@ -1062,7 +940,6 @@ class JarvisApp(App):
     def build(self):
         Window.clearcolor = get_color_from_hex(C["bg"])
 
-        # Android permissions
         if IS_ANDROID:
             request_permissions([
                 Permission.READ_EXTERNAL_STORAGE,
@@ -1074,47 +951,20 @@ class JarvisApp(App):
         self.sm = ScreenManager(transition=SlideTransition())
         self.sm.app_ref = self
 
-        # Screens add karo
-        chat = ChatScreen(name="chat")
-        settings = SettingsScreen(name="settings")
-        pdf = PDFScreen(name="pdf")
-        files = FilesScreen(name="files")
-
-        self.sm.add_widget(chat)
-        self.sm.add_widget(settings)
-        self.sm.add_widget(pdf)
-        self.sm.add_widget(files)
+        self.sm.add_widget(ChatScreen(name="chat"))
+        self.sm.add_widget(SettingsScreen(name="settings"))
+        self.sm.add_widget(PDFScreen(name="pdf"))
+        self.sm.add_widget(FilesScreen(name="files"))
 
         return self.sm
 
     def open_menu(self):
-        """Side menu popup."""
         content = BoxLayout(orientation="vertical",
                             spacing=dp(8), padding=dp(12))
-        for lbl, screen in [
-            ("💬  Chat",         "chat"),
-            ("📄  PDF Manager",  "pdf"),
-            ("📁  Files",        "files"),
-            ("⚙   Settings",    "settings"),
-        ]:
-            b = JarvisButton(text=lbl, bg_color=C["card"],
-                             size_hint_y=None, height=dp(48))
-            b.color = get_color_from_hex(C["accent"])
-            def go(btn, s=screen, p=None):
-                if p: p.dismiss()
-                self.sm.current = s
-            b.bind(on_press=lambda btn, s=screen: None)
-            content.add_widget(b)
-
-        popup = Popup(title="◈ JARVIS Menu",
-                      content=content,
+        popup = Popup(title="◈ JARVIS Menu", content=content,
                       size_hint=(0.75, 0.55),
                       background_color=get_color_from_hex(C["bar"]),
                       title_color=get_color_from_hex(C["accent"]))
-
-        # Re-bind with popup reference
-        for child in content.children[:]:
-            content.remove_widget(child)
 
         for lbl, screen in [
             ("💬  Chat",        "chat"),
