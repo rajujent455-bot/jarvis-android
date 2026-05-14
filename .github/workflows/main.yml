@@ -1,0 +1,35 @@
+name: Build JARVIS APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Cache buildozer
+        uses: actions/cache@v3
+        with:
+          path: .buildozer_cache
+          key: buildozer-${{ runner.os }}-${{ hashFiles('jarvis/buildozer.spec') }}
+          restore-keys: buildozer-${{ runner.os }}-
+
+      - name: Build APK via Docker
+        uses: ArtemSBulgakov/buildozer-action@v1
+        id: buildozer
+        with:
+          command: buildozer android debug
+          workdir: jarvis
+          buildozer_version: stable
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v3
+        with:
+          name: JARVIS-APK
+          path: ${{ steps.buildozer.outputs.filename }}
+          retention-days: 30
