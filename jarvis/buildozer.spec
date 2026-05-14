@@ -6,17 +6,14 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,ico
 version = 1.0
 
-# FIX 1: Kivy version update kiya
-requirements = python3,kivy==2.3.0
+# pypdf aur requests add kiye — anthropic SDK hataya (urllib use hoga)
+requirements = python3,kivy==2.3.0,requests,pypdf
 
 orientation = portrait
-android.permissions = INTERNET,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE
+android.permissions = INTERNET,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,RECORD_AUDIO
 android.api = 33
 android.minapi = 24
-
-# FIX 2: NDK 28c → 25b
 android.ndk = 25b
-
 android.archs = arm64-v8a
 android.accept_sdk_license = True
 android.release_artifact = apk
