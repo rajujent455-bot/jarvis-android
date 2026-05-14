@@ -15,21 +15,25 @@ jobs:
       - name: Cache buildozer
         uses: actions/cache@v4
         with:
-          path: .buildozer_cache
+          path: jarvis/.buildozer
           key: buildozer-${{ runner.os }}-${{ hashFiles('jarvis/buildozer.spec') }}
           restore-keys: buildozer-${{ runner.os }}-
 
-      - name: Build APK via Docker
-        uses: ArtemSBulgakov/buildozer-action@v1
-        id: buildozer
-        with:
-          command: buildozer android debug
-          workdir: jarvis
-          buildozer_version: stable
+      - name: Build APK using official Kivy Docker image
+        run: |
+          docker run --rm \
+            --volume ${{ github.workspace }}/jarvis:/home/user/hostcwd \
+            kivy/buildozer \
+            android debug
+
+      - name: Find APK
+        run: |
+          find ${{ github.workspace }}/jarvis -name "*.apk" 2>/dev/null || echo "NO APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: JARVIS-APK
-          path: ${{ steps.buildozer.outputs.filename }}
+          path: jarvis/bin/*.apk
+          if-no-files-found: warn
           retention-days: 30
