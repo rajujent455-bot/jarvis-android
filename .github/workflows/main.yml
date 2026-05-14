@@ -7,31 +7,80 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04   # pinned version — stable rehta hai
 
     steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      # ── FIX 2: NotoEmoji font download ─────────────────────────────────
+      # ── 2. Python setup ──────────────────────────────────────────────────
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # ── 3. System dependencies ───────────────────────────────────────────
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            git zip unzip openjdk-17-jdk \
+            autoconf libtool pkg-config zlib1g-dev \
+            libncurses5-dev libncursesw5-dev libtinfo5 cmake \
+            libffi-dev libssl-dev \
+            build-essential ccache
+
+      # ── 4. FIX 2: NotoEmoji font download ────────────────────────────────
       - name: Download NotoEmoji font
         run: |
           mkdir -p assets/fonts
-          curl -L \
+          curl -fsSL \
             "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf" \
             -o assets/fonts/NotoEmoji.ttf
-          echo "Font size: $(du -sh assets/fonts/NotoEmoji.ttf)"
+          ls -lh assets/fonts/
 
-      # ── Build APK ───────────────────────────────────────────────────────
-      - name: Build with Buildozer
-        uses: ArtemSBulgakov/buildozer-action@v1
-        id: buildozer
+      # ── 5. Buildozer + dependencies install ──────────────────────────────
+      - name: Install Buildozer and Python deps
+        run: |
+          pip install --upgrade pip
+          pip install buildozer==1.5.0 cython==0.29.33
+
+      # ── 6. Cache — builds bahut time lete hain ───────────────────────────
+      - name: Cache Buildozer global dir
+        uses: actions/cache@v4
         with:
-          command: buildozer android debug
-          buildozer_version: 1.5.0
+          path: ~/.buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
 
-      - name: Upload APK artifact
+      - name: Cache .buildozer local dir
+        uses: actions/cache@v4
+        with:
+          path: .buildozer
+          key: buildozer-local-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-local-${{ runner.os }}-
+
+      # ── 7. Build APK ─────────────────────────────────────────────────────
+      - name: Build APK
+        run: |
+          buildozer -v android debug 2>&1 | tee build.log
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
+      # ── 8. Upload APK ─────────────────────────────────────────────────────
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: jarvis-apk
-          path: ${{ steps.buildozer.outputs.filename }}
+          name: jarvis-debug-apk
+          path: bin/*.apk
+
+      # ── 9. Upload build log (debug ke liye) ──────────────────────────────
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
