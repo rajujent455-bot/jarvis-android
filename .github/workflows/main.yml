@@ -14,7 +14,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'        # 3.10 bhi chalta, 3.11 better hai
+          python-version: '3.11'
 
       - name: Install system dependencies
         run: |
@@ -28,9 +28,7 @@ jobs:
             build-essential ccache \
             libltdl-dev
 
-          # libtinfo5 NAHI hai 22.04 pe — ye line hata di
-
-      - name: Setup Android SDK         # YE MISSING THA
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
       - name: Install Python packages
@@ -38,9 +36,9 @@ jobs:
           pip install --upgrade pip
           pip install buildozer==1.5.0
           pip install cython==0.29.37
-          pip install python-for-android==2024.01.21   # old version ki jagah
+          pip install python-for-android==2024.01.21
 
-      - name: Cache buildozer global    # YE MISSING THA
+      - name: Cache buildozer
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
@@ -59,7 +57,7 @@ jobs:
           path: jarvis/bin/*.apk
           retention-days: 30
 
-      - name: Upload log if failed      # DEBUG ke liye useful
+      - name: Upload log if failed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
